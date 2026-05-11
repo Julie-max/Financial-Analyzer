@@ -1,0 +1,7 @@
+# PDF files are excluded from git via .gitignore
+# Generate sample PDFs by running: python data/generate_sample_pdf.py
+# This creates:
+#   - hdfc_sample_statement.pdf  (56 transactions, HDFC format)
+#   - sbi_sample_statement.pdf   (47 transactions, SBI format)
+#
+# NEVER commit real bank statements — they contain personal financial data.
