@@ -308,6 +308,39 @@ TRAINING_DATA = [
         "GROWW INVE",
         [("GROWW", "PAYEE"), ("INVE", "PAYEE")]
     ),
+    # ── Axis Bank UPIAB/UPIAR format ──────────────────────────────────────
+    (
+        "UPIAB/603250424933/CR/ARUL MAR/SBIN",
+        [("UPIAB", "PREFIX"), ("/", "SEP"),
+         ("603250424933", "REF_NUM"), ("/", "SEP"),
+         ("CR", "PREFIX"), ("/", "SEP"),
+         ("ARUL", "PAYEE"), ("MAR", "PAYEE"), ("/", "SEP"),
+         ("SBIN", "BANK")]
+    ),
+    (
+        "UPIAR/603604944501/DR/ciceelia/SBIN",
+        [("UPIAR", "PREFIX"), ("/", "SEP"),
+         ("603604944501", "REF_NUM"), ("/", "SEP"),
+         ("DR", "PREFIX"), ("/", "SEP"),
+         ("ciceelia", "PAYEE"), ("/", "SEP"),
+         ("SBIN", "BANK")]
+    ),
+    (
+        "UPIAR/603701391410/DR/THE LEMO/BARB",
+        [("UPIAR", "PREFIX"), ("/", "SEP"),
+         ("603701391410", "REF_NUM"), ("/", "SEP"),
+         ("DR", "PREFIX"), ("/", "SEP"),
+         ("THE", "PAYEE"), ("LEMO", "PAYEE"), ("/", "SEP"),
+         ("BARB", "BANK")]
+    ),
+    (
+        "UPIAB/604848515910/CR/BRIANT J/SBIN",
+        [("UPIAB", "PREFIX"), ("/", "SEP"),
+         ("604848515910", "REF_NUM"), ("/", "SEP"),
+         ("CR", "PREFIX"), ("/", "SEP"),
+         ("BRIANT", "PAYEE"), ("J", "PAYEE"), ("/", "SEP"),
+         ("SBIN", "BANK")]
+    ),
     # ── VPS format ─────────────────────────────────────────────────────────
     (
         "VPS/KAMARAJ AKA/202511160037/531919778463/COIMBATO",

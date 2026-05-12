@@ -25,47 +25,62 @@ COLUMN_KEYWORDS = {
     "date": [
         "date", "txn date", "transaction date", "value date",
         "posting date", "trans date", "tran date", "post date",
+        "entry date", "book date", "effective date", "process date",
     ],
     "description": [
         "description", "narration", "remarks", "particulars",
         "transaction remarks", "details", "transaction details",
-        "cheque details", "transaction narration",
+        "cheque details", "transaction narration", "memo",
+        "transaction description", "narrative", "transaction",
     ],
     "debit": [
         "debit", "withdrawal", "dr", "withdrawals", "debit amount",
         "withdrawal amount", "debit (", "dr amount", "paid out",
-        "debit(", "₹ debit", "rs. debit", "wdl",
+        "debit(", "₹ debit", "rs. debit", "wdl", "money out",
+        "outflow", "expense", "debit amt",
     ],
     "credit": [
         "credit", "deposit", "cr", "deposits", "credit amount",
         "deposit amount", "credit (", "cr amount", "paid in",
-        "credit(", "₹ credit", "rs. credit", "dep",
+        "credit(", "₹ credit", "rs. credit", "dep", "money in",
+        "inflow", "credit amt",
     ],
     "balance": [
         "balance", "closing balance", "running balance",
         "available balance", "bal", "balance (", "closing bal",
-        "balance(",
+        "balance(", "net balance", "ledger balance", "balance( )",
+        "balance()",
+    ],
+    "amount": [
+        "amount", "amount( )", "amount()", "amount (", "amount(",
+        "transaction amount", "txn amount",
     ],
     "reference": [
         "cheque", "chq", "ref", "reference", "cheque no",
         "chq no", "ref no", "cheque number", "ref no/",
-        "cheque no.", "ref no.", "chq/ref",
+        "cheque no.", "ref no.", "chq/ref", "transaction id",
+        "txn id", "transaction no", "instrument no", "trans id",
     ],
     "serial": [
         "s no", "sno", "s.no", "sr no", "serial", "no.",
-        "#", "sl no",
+        "#", "sl no", "sr.", "s/n",
     ],
 }
 
 # Date patterns used to validate transaction rows
 DATE_PATTERNS = [
-    re.compile(r"^\d{2}/\d{2}/\d{4}$"),       # DD/MM/YYYY
-    re.compile(r"^\d{2}-\d{2}-\d{4}$"),       # DD-MM-YYYY
-    re.compile(r"^\d{4}-\d{2}-\d{2}$"),       # YYYY-MM-DD
-    re.compile(r"^\d{2}-[A-Za-z]{3}-\d{4}$"), # DD-Mon-YYYY
+    re.compile(r"^\d{2}/\d{2}/\d{4}$"),         # DD/MM/YYYY
+    re.compile(r"^\d{2}-\d{2}-\d{4}$"),         # DD-MM-YYYY
+    re.compile(r"^\d{4}-\d{2}-\d{2}$"),         # YYYY-MM-DD
+    re.compile(r"^\d{2}-[A-Za-z]{3}-\d{4}$"),   # DD-Mon-YYYY
     re.compile(r"^\d{2}\s[A-Za-z]{3}\s\d{4}$"), # DD Mon YYYY
-    re.compile(r"^\d{2}/[A-Za-z]{3}/\d{4}$"), # DD/Mon/YYYY
-    re.compile(r"^\d{2}\.\d{2}\.\d{4}$"),     # DD.MM.YYYY
+    re.compile(r"^\d{2}/[A-Za-z]{3}/\d{4}$"),   # DD/Mon/YYYY
+    re.compile(r"^\d{2}\.\d{2}\.\d{4}$"),       # DD.MM.YYYY
+    re.compile(r"^\d{2}/\d{2}/\d{2}$"),         # DD/MM/YY
+    re.compile(r"^\d{2}-\d{2}-\d{2}$"),         # DD-MM-YY
+    re.compile(r"^\d{4}/\d{2}/\d{2}$"),         # YYYY/MM/DD
+    re.compile(r"^[A-Za-z]{3}\s\d{2},\s\d{4}$"), # Mon DD, YYYY
+    re.compile(r"^\d{2}\s[A-Za-z]{3}$"),        # DD Mon (no year, some banks)
 ]
 
 # DR/CR suffix pattern (SBI style: "1,250.00 DR")
@@ -143,26 +158,39 @@ class TableParser:
             for kw in keywords
             if kw in text
         )
-        # Require at least 3 keyword hits AND must include a date-like keyword
-        # to avoid partial headers (e.g. just "Balance")
+        # Require at least 2 keyword hits
+        # Relaxed from 3 to handle banks with fewer standard column names
+        # e.g. a table with just "Date | Details | Amount | Balance" = 3 hits
         has_date_keyword = any(kw in text for kw in COLUMN_KEYWORDS["date"])
-        return keyword_hits >= 3 and has_date_keyword
+        has_amount_keyword = any(
+            kw in text for kw in
+            COLUMN_KEYWORDS["debit"] + COLUMN_KEYWORDS["credit"] + COLUMN_KEYWORDS["balance"] + COLUMN_KEYWORDS.get("amount", [])
+        )
+        # Accept if: 2+ hits with a date keyword, OR 3+ hits with an amount keyword
+        return (keyword_hits >= 2 and has_date_keyword) or (keyword_hits >= 3 and has_amount_keyword)
 
     def _detect_columns(self, header_row: List) -> Dict[str, int]:
         """
         Map column roles to their index positions from a header row.
+        Uses longest-match priority to avoid 'transaction id' matching 'description'.
         """
         column_map = {}
+        # Score each cell against each role — longer keyword match wins
         for idx, cell in enumerate(header_row):
             if cell is None:
                 continue
             cell_lower = str(cell).lower().strip()
+            best_role = None
+            best_len = 0
             for role, keywords in COLUMN_KEYWORDS.items():
                 if role in column_map:
                     continue
-                if any(kw in cell_lower for kw in keywords):
-                    column_map[role] = idx
-                    break
+                for kw in keywords:
+                    if kw in cell_lower and len(kw) > best_len:
+                        best_len = len(kw)
+                        best_role = role
+            if best_role:
+                column_map[best_role] = idx
 
         # Detect schema: two-column vs single amount column
         if "debit" not in column_map and "credit" not in column_map:
@@ -312,10 +340,11 @@ class TableParser:
         self, row: List, column_map: Dict[str, int]
     ) -> Optional[float]:
         """
-        Parse amount handling all three bank schemas:
-        1. Two-column: separate debit and credit columns
-        2. DR/CR suffix: single amount column with DR/CR suffix (SBI)
-        3. Signed: single amount column with +/- sign
+        Parse amount handling all four bank schemas:
+        1. Two-column: separate debit and credit columns (HDFC, ICICI)
+        2. DR/CR suffix: "1,250.00 DR" (SBI passbook)
+        3. (Cr)/(Dr) suffix: "10000.00(Cr)" (Axis Bank)
+        4. Signed: plain +/- amount
         """
         # Schema 1: separate debit + credit columns
         if "debit" in column_map or "credit" in column_map:
@@ -331,13 +360,24 @@ class TableParser:
                 return credit
             return None
 
-        # Schema 2 & 3: single amount column
+        # Schema 2, 3, 4: single amount column
         amount_str = self._get_cell(row, column_map, "amount")
         if not amount_str:
             return None
 
-        # Check for DR/CR suffix (SBI style)
-        match = DR_CR_PATTERN.match(amount_str.strip())
+        amount_str = amount_str.strip()
+
+        # Schema 3: Axis Bank style — "10000.00(Cr)" or "100.00(Dr)"
+        axis_match = re.match(r'^([\d,]+\.?\d*)\s*\((Cr|Dr)\)$', amount_str, re.IGNORECASE)
+        if axis_match:
+            value = self._to_float(axis_match.group(1))
+            suffix = axis_match.group(2).upper()
+            if value is None:
+                return None
+            return value if suffix == "CR" else -value
+
+        # Schema 2: SBI style — "1,250.00 DR" or "1,250.00 CR"
+        match = DR_CR_PATTERN.match(amount_str)
         if match:
             value = self._to_float(match.group(1))
             suffix = match.group(2).upper()
@@ -345,7 +385,7 @@ class TableParser:
                 return None
             return -value if suffix == "DR" else value
 
-        # Plain signed or unsigned amount
+        # Schema 4: plain signed or unsigned amount
         return self._to_float(amount_str)
 
     # ------------------------------------------------------------------
@@ -376,6 +416,9 @@ class TableParser:
         s = str(value).strip()
         if not s or s.lower() in ("", "null", "none", "n/a", "-", "0.0"):
             return None
+        # Strip Axis Bank (Cr)/(Dr) suffix from balance column
+        # e.g. "1011000.00(Cr)" → "1011000.00"
+        s = re.sub(r'\s*\((Cr|Dr)\)$', '', s, flags=re.IGNORECASE).strip()
         # Remove currency symbols, commas, spaces
         s = AMOUNT_CLEAN.sub("", s)
         # Handle parenthetical negatives: (1,250.00) → -1250.00
@@ -431,13 +474,23 @@ class TableParser:
         value = _re.sub(r'\s+\d{10,}\s+AT\s+\d+.*$', '', value, flags=_re.IGNORECASE).strip()
 
         # UPI: extract payee field
-        if value.upper().startswith("UPI/"):
+        # Handles: UPI/DR/..., UPI/CR/..., UPIAB/..., UPIAR/...
+        if value.upper().startswith("UPI"):
             parts = value.split("/")
             if len(parts) >= 2:
                 second = parts[1].strip().upper()
+                # Standard SBI/CUB: UPI/DR/REFNO/PAYEE or UPI/CR/REFNO/PAYEE
                 if second in ("DR", "CR") and len(parts) >= 4:
                     return parts[3].strip().upper() or "UNKNOWN"
-                return parts[1].strip().upper()
+                # Axis Bank: UPIAB/REFNO/CR/PAYEE or UPIAR/REFNO/DR/PAYEE
+                # parts[0]=UPIAB, parts[1]=REFNO, parts[2]=CR/DR, parts[3]=PAYEE
+                if _is_ref_number(second) and len(parts) >= 4:
+                    third = parts[2].strip().upper()
+                    if third in ("CR", "DR") and len(parts) >= 4:
+                        return parts[3].strip().upper() or "UNKNOWN"
+                # Standard ICICI: UPI/PAYEE/VPA/...
+                if not _is_ref_number(second) and second not in ("DR", "CR"):
+                    return second
 
         # NEFT: find meaningful part
         if value.upper().startswith("NEFT"):
