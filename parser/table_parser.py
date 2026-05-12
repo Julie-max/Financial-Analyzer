@@ -455,10 +455,11 @@ class TableParser:
         return self._rule_based_clean(value)
 
     def _rule_based_clean(self, value: str) -> str:
-        """Minimal fallback description cleaner used when CRF is unavailable."""
-        import re as _re
-
-        # Strip known bank prefixes
+        """
+        Minimal fallback description cleaner used only when CRF is unavailable.
+        Uses string splitting on known separators — no regex.
+        """
+        # Strip known bank prefixes using simple string operations
         all_prefixes = (
             "WDL TFR ", "DEP TFR ", "CEMTEX DEP ",
             "TO ONL ", "BY ONL ", "TO POS:", "TO ATM WDL:", "TO ATM ",
@@ -470,29 +471,25 @@ class TableParser:
                 value = value[len(prefix):].strip()
                 break
 
-        # Strip SBI suffix pattern
-        value = _re.sub(r'\s+\d{10,}\s+AT\s+\d+.*$', '', value, flags=_re.IGNORECASE).strip()
-
-        # UPI: extract payee field
+        # UPI: extract payee field by splitting on "/"
         # Handles: UPI/DR/..., UPI/CR/..., UPIAB/..., UPIAR/...
         if value.upper().startswith("UPI"):
             parts = value.split("/")
             if len(parts) >= 2:
                 second = parts[1].strip().upper()
-                # Standard SBI/CUB: UPI/DR/REFNO/PAYEE or UPI/CR/REFNO/PAYEE
+                # SBI/CUB: UPI/DR/REFNO/PAYEE
                 if second in ("DR", "CR") and len(parts) >= 4:
                     return parts[3].strip().upper() or "UNKNOWN"
-                # Axis Bank: UPIAB/REFNO/CR/PAYEE or UPIAR/REFNO/DR/PAYEE
-                # parts[0]=UPIAB, parts[1]=REFNO, parts[2]=CR/DR, parts[3]=PAYEE
+                # Axis: UPIAB/REFNO/CR/PAYEE
                 if _is_ref_number(second) and len(parts) >= 4:
                     third = parts[2].strip().upper()
-                    if third in ("CR", "DR") and len(parts) >= 4:
+                    if third in ("CR", "DR"):
                         return parts[3].strip().upper() or "UNKNOWN"
-                # Standard ICICI: UPI/PAYEE/VPA/...
+                # ICICI: UPI/PAYEE/VPA/...
                 if not _is_ref_number(second) and second not in ("DR", "CR"):
                     return second
 
-        # NEFT: find meaningful part
+        # NEFT: split on "-", find first meaningful token
         if value.upper().startswith("NEFT"):
             parts = value.split("-")
             for part in parts[2:]:
@@ -500,7 +497,7 @@ class TableParser:
                 if len(part) > 4 and not part.isdigit():
                     return part.upper()
 
-        # BIL: extract payee
+        # BIL: split on "/", extract payee
         if value.upper().startswith("BIL/"):
             parts = value.split("/")
             if len(parts) >= 3:
@@ -515,16 +512,11 @@ class TableParser:
                     if payee and len(payee) > 3:
                         return payee.upper()
 
-        # VPS/IPS
+        # VPS/IPS: split on "/"
         if value.upper().startswith(("VPS/", "IPS/")):
             parts = value.split("/")
             if len(parts) >= 2:
                 return parts[1].strip().upper()
-
-        # Generic: remove trailing ref numbers
-        cleaned = _re.sub(r'\s+[A-Z0-9]{8,}:?$', '', value).strip()
-        if cleaned and cleaned != value:
-            return cleaned.upper()
 
         return value.upper().strip()
 
