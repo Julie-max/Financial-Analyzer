@@ -1,4 +1,4 @@
-"""
+﻿"""
 ML-Based Table Parser
 Converts raw pdfplumber table rows into structured transaction dicts.
 
@@ -36,7 +36,7 @@ DATE_PATTERNS = [
 DR_CR_PATTERN = re.compile(r"^([\d,]+\.?\d*)\s*(DR|CR)$", re.IGNORECASE)
 
 # Amount cleanup
-AMOUNT_CLEAN = re.compile(r"[₹$€,\s]")
+AMOUNT_CLEAN = re.compile(r"[â‚¹$â‚¬,\s]")
 
 
 class TableParser:
@@ -64,7 +64,7 @@ class TableParser:
                     break
 
         if column_map is None:
-            # No header found anywhere — infer from ALL pages combined
+            # No header found anywhere â€” infer from ALL pages combined
             all_rows = [row for table in pages_tables for row in (table or [])]
             column_map = self._infer_columns_from_data(all_rows)
             if column_map:
@@ -116,7 +116,7 @@ class TableParser:
     def _detect_columns(self, header_row: List) -> Dict[str, int]:
         """
         Map column roles to their index positions using the ML column classifier.
-        No hardcoded keyword lists — generalizes to unseen column headers.
+        No hardcoded keyword lists â€” generalizes to unseen column headers.
         """
         from parser.column_classifier import get_column_classifier
         clf = get_column_classifier()
@@ -151,7 +151,7 @@ class TableParser:
         for i, c in enumerate(first_row):
             if i not in date_cols and c and len(str(c)) > 5:
                 try:
-                    float(str(c).replace(',', '').replace('₹', '').strip())
+                    float(str(c).replace(',', '').replace('â‚¹', '').strip())
                 except ValueError:
                     desc_col = i
                     break
@@ -188,7 +188,7 @@ class TableParser:
             column_map["debit"] = pre_balance[0]
             column_map["credit"] = pre_balance[1]
         elif len(pre_balance) == 1:
-            # Single amount column — sign from WDL/DEP prefix
+            # Single amount column â€” sign from WDL/DEP prefix
             column_map["amount"] = pre_balance[0]
         else:
             # Check for dash-placeholder columns (SBI: debit=20.00, credit=-)
@@ -219,7 +219,7 @@ class TableParser:
         if not row or len(row) < 2:
             return None
 
-        # Get date — required field
+        # Get date â€” required field
         date_str = self._get_cell(row, column_map, "date")
         if not date_str or not self._is_date(date_str):
             return None
@@ -288,7 +288,7 @@ class TableParser:
 
         amount_str = amount_str.strip()
 
-        # Schema 3: Axis Bank style — "10000.00(Cr)" or "100.00(Dr)"
+        # Schema 3: Axis Bank style â€” "10000.00(Cr)" or "100.00(Dr)"
         axis_match = re.match(r'^([\d,]+\.?\d*)\s*\((Cr|Dr)\)$', amount_str, re.IGNORECASE)
         if axis_match:
             value = self._to_float(axis_match.group(1))
@@ -297,7 +297,7 @@ class TableParser:
                 return None
             return value if suffix == "CR" else -value
 
-        # Schema 2: SBI style — "1,250.00 DR" or "1,250.00 CR"
+        # Schema 2: SBI style â€” "1,250.00 DR" or "1,250.00 CR"
         match = DR_CR_PATTERN.match(amount_str)
         if match:
             value = self._to_float(match.group(1))
@@ -338,11 +338,11 @@ class TableParser:
         if not s or s.lower() in ("", "null", "none", "n/a", "-", "0.0"):
             return None
         # Strip Axis Bank (Cr)/(Dr) suffix from balance column
-        # e.g. "1011000.00(Cr)" → "1011000.00"
+        # e.g. "1011000.00(Cr)" â†’ "1011000.00"
         s = re.sub(r'\s*\((Cr|Dr)\)$', '', s, flags=re.IGNORECASE).strip()
         # Remove currency symbols, commas, spaces
         s = AMOUNT_CLEAN.sub("", s)
-        # Handle parenthetical negatives: (1,250.00) → -1250.00
+        # Handle parenthetical negatives: (1,250.00) â†’ -1250.00
         if s.startswith("(") and s.endswith(")"):
             s = "-" + s[1:-1]
         try:
@@ -363,7 +363,7 @@ class TableParser:
         # Collapse newlines and extra whitespace
         value = " ".join(value.split())
 
-        # Use CRF parser — the ML-based sequence labeler
+        # Use CRF parser â€” the ML-based sequence labeler
         try:
             from parser.crf_parser import extract_payee
             result = extract_payee(value)
@@ -376,151 +376,16 @@ class TableParser:
         return self._rule_based_clean(value)
 
     def _rule_based_clean(self, value: str) -> str:
-        """
-        Minimal fallback description cleaner used only when CRF is unavailable.
-        Uses string splitting on known separators — no regex.
-        """
-        # Strip known bank prefixes using simple string operations
-        all_prefixes = (
-            "WDL TFR ", "DEP TFR ", "CEMTEX DEP ",
-            "TO ONL ", "BY ONL ", "TO POS:", "TO ATM WDL:", "TO ATM ",
-            "BY ATM ", "BY CREDIT:", "BY NEFT TRF:", "TO NEFT TRF:",
-            "BY ", "TO ",
-        )
-        for prefix in all_prefixes:
-            if value.upper().startswith(prefix.upper()):
-                value = value[len(prefix):].strip()
-                break
-
-        # UPI: extract payee field by splitting on "/"
-        # Handles: UPI/DR/..., UPI/CR/..., UPIAB/..., UPIAR/...
-        if value.upper().startswith("UPI"):
+        """Minimal fallback when CRF is unavailable. Splits on '/' to find payee."""
+        value = " ".join(value.split())
+        if "/" in value:
             parts = value.split("/")
-            if len(parts) >= 2:
-                second = parts[1].strip().upper()
-                # SBI/CUB: UPI/DR/REFNO/PAYEE
-                if second in ("DR", "CR") and len(parts) >= 4:
-                    return parts[3].strip().upper() or "UNKNOWN"
-                # Axis: UPIAB/REFNO/CR/PAYEE
-                if _is_ref_number(second) and len(parts) >= 4:
-                    third = parts[2].strip().upper()
-                    if third in ("CR", "DR"):
-                        return parts[3].strip().upper() or "UNKNOWN"
-                # ICICI: UPI/PAYEE/VPA/...
-                if not _is_ref_number(second) and second not in ("DR", "CR"):
-                    return second
-
-        # NEFT: split on "-", find first meaningful token
-        if value.upper().startswith("NEFT"):
-            parts = value.split("-")
-            for part in parts[2:]:
+            # Find first non-empty, non-numeric part that's not a known separator token
+            for part in parts:
                 part = part.strip()
-                if len(part) > 4 and not part.isdigit():
+                if part and len(part) > 2 and not part.isdigit() and part not in ("UPI", "DR", "CR", "NEFT", "BIL", "MMT", "IMPS", "INF", "INFT", "VPS", "IPS", "WDL", "DEP", "TFR", "ONL", "BY", "TO"):
                     return part.upper()
-
-        # BIL: split on "/", extract payee
-        if value.upper().startswith("BIL/"):
-            parts = value.split("/")
-            if len(parts) >= 3:
-                second = parts[1].strip().upper()
-                if second in ("INFT", "NEFT", "IMPS"):
-                    for part in parts[3:]:
-                        part = part.strip()
-                        if part and len(part) > 2:
-                            return part.upper()
-                else:
-                    payee = parts[2].strip()
-                    if payee and len(payee) > 3:
-                        return payee.upper()
-
-        # VPS/IPS: split on "/"
-        if value.upper().startswith(("VPS/", "IPS/")):
-            parts = value.split("/")
-            if len(parts) >= 2:
-                return parts[1].strip().upper()
-
         return value.upper().strip()
-
-
-def _is_ref_number(s: str) -> bool:
-    """
-    Check if a string is a reference/transaction number (not a merchant name).
-    Examples: '528213654253', 'EGZ1180606', 'INDBN52025073104653733'
-    """
-    s = s.strip()
-    if not s:
-        return False
-    if s.isdigit():
-        return True
-    # Mostly digits (>60% numeric) and length > 6
-    digit_ratio = sum(c.isdigit() for c in s) / len(s)
-    if digit_ratio > 0.6 and len(s) > 6:
-        return True
-    # Known ref number prefixes
-    ref_prefixes = ("INDBN", "INDBH", "ICICN", "KKBKN", "YESF", "HDFCH")
-    if any(s.upper().startswith(p) for p in ref_prefixes):
-        return True
-    return False
-
-
-def _extract_vpa_name(vpa: str) -> str:
-    """
-    Extract a readable merchant name from a UPI VPA (Virtual Payment Address).
-    VPAs look like: makemytrip@hdfc, swiggystores@icici, gpay-11265, paytmqr6x5
-    Returns a clean name or empty string if not extractable.
-
-    Examples:
-        makemytrip@hdfc    → makemytrip
-        swiggystores@icici → swiggystores
-        gpay-11265         → (empty — not meaningful)
-        paytmqr6x5         → (empty — not meaningful)
-        MAKEMYTRIP         → makemytrip
-        IRCTCAUTOP         → irctcautop
-        REDBUS32 R         → redbus
-        ZEPTOONLIN         → zeptoonlin
-    """
-    if not vpa:
-        return ""
-    vpa = vpa.strip()
-
-    # Extract part before @ sign
-    if "@" in vpa:
-        name = vpa.split("@")[0].strip()
-    else:
-        name = vpa
-
-    # Remove trailing digits and special chars
-    import re as _re
-    name = _re.sub(r'[\d\-_\.]+$', '', name).strip()
-
-    # Skip if it's a generic payment handle (gpay, paytm, etc.)
-    generic = ("gpay", "paytm", "phonepe", "upi", "bhim", "ybl", "okaxis",
-               "okhdfcbank", "okicici", "oksbi", "ibl", "axl", "pth", "oks",
-               "okb", "okh", "axisb", "hdfcbank", "icici", "sbi", "yesb",
-               "utib", "hdfc", "indb", "cnrb", "ioba", "ubin", "kkbk",
-               "barb", "fdrl", "idib", "mahb", "cosb", "bkid", "srcb",
-               "unba", "mahg", "nspb", "cbin", "ibkl")
-    generic_prefixes = ("paytmqr", "gpay-", "mab.", "vyapar", "bharatpe",
-                        "playstore", "goog-", "gpayrechar", "gpayutili",
-                        "redbus1", "redbus32", "zeptoonlin", "zeptomarke",
-                        "swiggystor", "airtel-", "payzomato")
-    if name.lower() in generic or len(name) <= 2:
-        return ""
-    if any(name.lower().startswith(p) for p in generic_prefixes):
-        return ""
-
-    # Skip if mostly digits
-    if sum(c.isdigit() for c in name) / max(len(name), 1) > 0.5:
-        return ""
-
-    # Clean trailing space + single letter (e.g. "REDBUS32 R" → "REDBUS")
-    import re as _re2
-    name = _re2.sub(r'\s+\w$', '', name).strip()
-    # Remove trailing digits
-    name = _re2.sub(r'\d+$', '', name).strip()
-
-    return name if len(name) > 2 else ""
-
 
 def parse_tables(pages_tables: List[List[List]]) -> List[Dict[str, Any]]:
     """Convenience function."""

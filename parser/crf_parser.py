@@ -1,4 +1,4 @@
-"""
+﻿"""
 CRF-Based Transaction Description Parser
 
 Uses Conditional Random Fields (CRF) — the classic pre-deep-learning NLP
@@ -522,14 +522,23 @@ class CRFDescriptionParser:
         Returns:
             Clean merchant name string, or the original description if extraction fails.
         """
+        return self.extract_payee_and_vpa(description)[0]
+
+    def extract_payee_and_vpa(self, description: str) -> tuple:
+        """
+        Extract both the payee name and VPA from a raw transaction description.
+
+        Returns:
+            (payee: str, vpa: str) — vpa is empty string if not found.
+        """
         if not description:
-            return "UNKNOWN"
+            return "UNKNOWN", ""
 
         description = " ".join(description.split())
         tokens = tokenize(description)
 
         if not tokens:
-            return description.upper()
+            return description.upper(), ""
 
         try:
             features = sequence_features(tokens)
@@ -541,23 +550,22 @@ class CRFDescriptionParser:
                 if label == "PAYEE"
             ]
 
-            if payee_tokens:
-                return " ".join(payee_tokens).upper().strip()
-
-            # Fallback: extract VPA tokens (often has full merchant name)
+            # Extract VPA tokens
             vpa_tokens = [
                 tokens[i] for i, label in enumerate(labels)
                 if label == "VPA"
             ]
-            if vpa_tokens:
-                vpa = vpa_tokens[0]
-                # Extract name from VPA (before @)
-                if "@" in vpa:
-                    name = vpa.split("@")[0]
-                    # Remove trailing digits
-                    name = re.sub(r'\d+$', '', name).strip()
-                    if len(name) > 2:
-                        return name.upper()
+            vpa = vpa_tokens[0] if vpa_tokens else ""
+
+            if payee_tokens:
+                return " ".join(payee_tokens).upper().strip(), vpa
+
+            # Fallback: extract name from VPA (before @)
+            if vpa and "@" in vpa:
+                name = vpa.split("@")[0]
+                name = re.sub(r'\d+$', '', name).strip()
+                if len(name) > 2:
+                    return name.upper(), vpa
 
             # Last fallback: return REMARK tokens
             remark_tokens = [
@@ -565,12 +573,12 @@ class CRFDescriptionParser:
                 if label == "REMARK"
             ]
             if remark_tokens:
-                return " ".join(remark_tokens).upper().strip()
+                return " ".join(remark_tokens).upper().strip(), vpa
 
         except Exception as e:
             logger.warning(f"CRF extraction failed for '{description}': {e}")
 
-        return description.upper()
+        return description.upper(), ""
 
     def _load_or_train(self):
         """Load trained CRF model or train a new one."""
