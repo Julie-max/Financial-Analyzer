@@ -1,13 +1,13 @@
 """
-Rule-Based Table Parser
+ML-Based Table Parser
 Converts raw pdfplumber table rows into structured transaction dicts.
 
-No LLM. No neural network.
+No LLM. No neural network. No hardcoded keyword lists.
 Uses:
-  - Keyword-based column header detection  (handles any bank layout)
-  - Schema detection                        (two-column / DR-CR / signed)
-  - UPI remark cleaner                      (extracts payee from UPI strings)
-  - Date pattern validation                 (filters header/footer rows)
+  - ML Column Classifier (char TF-IDF + LinearSVC) for column header detection
+  - CRF Parser for merchant name extraction from descriptions
+  - Data-driven schema detection for amount format (debit/credit/single column)
+  - Date pattern validation for transaction row filtering
 """
 
 import re
@@ -15,57 +15,6 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Column keyword maps
-# Maps column header keywords → semantic role
-# Covers ICICI, HDFC, SBI, Axis, Kotak, Yes Bank, IndusInd, Canara, PNB
-# ---------------------------------------------------------------------------
-COLUMN_KEYWORDS = {
-    "date": [
-        "date", "txn date", "transaction date", "value date",
-        "posting date", "trans date", "tran date", "post date",
-        "entry date", "book date", "effective date", "process date",
-    ],
-    "description": [
-        "description", "narration", "remarks", "particulars",
-        "transaction remarks", "details", "transaction details",
-        "cheque details", "transaction narration", "memo",
-        "transaction description", "narrative", "transaction",
-    ],
-    "debit": [
-        "debit", "withdrawal", "dr", "withdrawals", "debit amount",
-        "withdrawal amount", "debit (", "dr amount", "paid out",
-        "debit(", "₹ debit", "rs. debit", "wdl", "money out",
-        "outflow", "expense", "debit amt",
-    ],
-    "credit": [
-        "credit", "deposit", "cr", "deposits", "credit amount",
-        "deposit amount", "credit (", "cr amount", "paid in",
-        "credit(", "₹ credit", "rs. credit", "dep", "money in",
-        "inflow", "credit amt",
-    ],
-    "balance": [
-        "balance", "closing balance", "running balance",
-        "available balance", "bal", "balance (", "closing bal",
-        "balance(", "net balance", "ledger balance", "balance( )",
-        "balance()",
-    ],
-    "amount": [
-        "amount", "amount( )", "amount()", "amount (", "amount(",
-        "transaction amount", "txn amount",
-    ],
-    "reference": [
-        "cheque", "chq", "ref", "reference", "cheque no",
-        "chq no", "ref no", "cheque number", "ref no/",
-        "cheque no.", "ref no.", "chq/ref", "transaction id",
-        "txn id", "transaction no", "instrument no", "trans id",
-    ],
-    "serial": [
-        "s no", "sno", "s.no", "sr no", "serial", "no.",
-        "#", "sl no", "sr.", "s/n",
-    ],
-}
 
 # Date patterns used to validate transaction rows
 DATE_PATTERNS = [
@@ -142,64 +91,36 @@ class TableParser:
     # ------------------------------------------------------------------
 
     def _find_header_row(self, table: List[List]) -> Optional[List]:
-        """Find the header row in a table (first row with column keywords)."""
+        """Find the header row using the ML column classifier."""
         for row in table[:5]:
             if row and self._is_header_row(row):
                 return row
         return None
 
     def _is_header_row(self, row: List) -> bool:
-        """Check if a row looks like a column header row."""
+        """
+        Check if a row is a column header using the ML column classifier.
+        A row is a header if the classifier assigns meaningful roles to 2+ cells
+        and at least one is a date or amount role.
+        """
         if not row:
             return False
-        text = " ".join(str(c).lower() for c in row if c)
-        keyword_hits = sum(
-            1 for keywords in COLUMN_KEYWORDS.values()
-            for kw in keywords
-            if kw in text
-        )
-        # Require at least 2 keyword hits
-        # Relaxed from 3 to handle banks with fewer standard column names
-        # e.g. a table with just "Date | Details | Amount | Balance" = 3 hits
-        has_date_keyword = any(kw in text for kw in COLUMN_KEYWORDS["date"])
-        has_amount_keyword = any(
-            kw in text for kw in
-            COLUMN_KEYWORDS["debit"] + COLUMN_KEYWORDS["credit"] + COLUMN_KEYWORDS["balance"] + COLUMN_KEYWORDS.get("amount", [])
-        )
-        # Accept if: 2+ hits with a date keyword, OR 3+ hits with an amount keyword
-        return (keyword_hits >= 2 and has_date_keyword) or (keyword_hits >= 3 and has_amount_keyword)
+        from parser.column_classifier import get_column_classifier
+        clf = get_column_classifier()
+        roles = clf.predict_batch([str(c) if c else "" for c in row])
+        meaningful = [r for r in roles if r != "ignore"]
+        has_date = "date" in roles
+        has_amount = any(r in ("debit", "credit", "balance", "amount") for r in roles)
+        return len(meaningful) >= 2 and (has_date or has_amount)
 
     def _detect_columns(self, header_row: List) -> Dict[str, int]:
         """
-        Map column roles to their index positions from a header row.
-        Uses longest-match priority to avoid 'transaction id' matching 'description'.
+        Map column roles to their index positions using the ML column classifier.
+        No hardcoded keyword lists — generalizes to unseen column headers.
         """
-        column_map = {}
-        # Score each cell against each role — longer keyword match wins
-        for idx, cell in enumerate(header_row):
-            if cell is None:
-                continue
-            cell_lower = str(cell).lower().strip()
-            best_role = None
-            best_len = 0
-            for role, keywords in COLUMN_KEYWORDS.items():
-                if role in column_map:
-                    continue
-                for kw in keywords:
-                    if kw in cell_lower and len(kw) > best_len:
-                        best_len = len(kw)
-                        best_role = role
-            if best_role:
-                column_map[best_role] = idx
-
-        # Detect schema: two-column vs single amount column
-        if "debit" not in column_map and "credit" not in column_map:
-            if "balance" in column_map:
-                balance_idx = column_map["balance"]
-                if balance_idx > 0:
-                    column_map["amount"] = balance_idx - 1
-
-        return column_map
+        from parser.column_classifier import get_column_classifier
+        clf = get_column_classifier()
+        return clf.detect_column_map(header_row)
 
     def _infer_columns_from_data(self, table: List[List]) -> Optional[Dict[str, int]]:
         """

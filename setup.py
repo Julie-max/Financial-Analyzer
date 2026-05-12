@@ -37,7 +37,7 @@ def main():
         print(f"  ✗ Classifier training failed: {e}")
 
     # 3. Train CRF description parser
-    print("\n[3/4] Training CRF description parser...")
+    print("\n[3/5] Training CRF description parser...")
     try:
         from parser.crf_parser import CRFDescriptionParser
         CRFDescriptionParser()
@@ -45,8 +45,17 @@ def main():
     except Exception as e:
         print(f"  ✗ CRF parser training failed: {e}")
 
-    # 4. Generate sample PDFs for testing
-    print("\n[4/4] Generating sample bank statement PDFs...")
+    # 4. Train ML column header classifier
+    print("\n[4/5] Training ML column header classifier (char TF-IDF + LinearSVC)...")
+    try:
+        from parser.column_classifier import ColumnClassifier
+        ColumnClassifier()
+        print("  ✓ Column classifier trained and ready.")
+    except Exception as e:
+        print(f"  ✗ Column classifier training failed: {e}")
+
+    # 5. Generate sample PDFs for testing
+    print("\n[5/5] Generating sample bank statement PDFs...")
     try:
         from data.generate_sample_pdf import generate_hdfc_statement, generate_sbi_statement
         data_dir = Path(__file__).parent / "data"
