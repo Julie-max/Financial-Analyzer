@@ -1,264 +1,228 @@
 """
-ML-Based Column Header Classifier
+Column Header Classifier — Simple Normalized Lookup
 
-Replaces the hardcoded COLUMN_KEYWORDS dictionary with a trained
-character n-gram TF-IDF + LinearSVC classifier.
+Maps column headers to their semantic roles using normalized text matching.
+No ML needed here — there are a finite set of column header variations
+across banks, and a lookup table is more reliable and debuggable.
 
-Given a column header like "Txn Amount", "Withdrawal (INR)", "Narration",
-"Value Date", etc., it predicts the semantic role:
-  date | description | debit | credit | balance | amount | reference | ignore
-
-Why this works without hardcoding:
-- Character n-grams (2-4 chars) capture partial matches:
-  "Txn Amount" → "txn", "amou", "moun", "ount" → similar to "amount"
-  "Withdrawal (INR)" → "with", "draw", "rawd" → similar to "withdrawal"
-- Trained on 200+ real column headers from Indian and international banks
-- Generalizes to unseen headers through character-level similarity
-
-Amount schema detection is also ML-based:
-- Looks at actual cell values in the first data row
-- Classifies the schema: two_column | dr_cr_suffix | cr_dr_paren | signed
+Roles: date | description | debit | credit | balance | amount | reference | ignore
 """
 
 import logging
 import re
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
-import joblib
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
-from sklearn.svm import LinearSVC
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
-MODEL_PATH = Path(__file__).parent.parent / "models" / "column_classifier.joblib"
-
 # ---------------------------------------------------------------------------
-# Column role labels
-# ---------------------------------------------------------------------------
-COLUMN_ROLES = ["date", "description", "debit", "credit", "balance", "amount", "reference", "ignore"]
-
-# ---------------------------------------------------------------------------
-# Training data — column headers from real bank statements
-# Format: (header_text, role)
+# Column role lookup table
+# Normalized header text → role
 # Covers: SBI, HDFC, ICICI, Axis, CUB, Kotak, PNB, Canara, BOI, Yes Bank,
 #         IDBI, Federal, IndusInd, UCO, IOB, Bandhan, RBL, AU Small Finance
 # ---------------------------------------------------------------------------
-COLUMN_TRAINING_DATA: List[Tuple[str, str]] = [
-
+HEADER_ROLE_MAP: Dict[str, str] = {
     # ── DATE ──────────────────────────────────────────────────────────────
-    ("Date", "date"),
-    ("Txn Date", "date"),
-    ("Transaction Date", "date"),
-    ("Value Date", "date"),
-    ("Post Date", "date"),
-    ("Posting Date", "date"),
-    ("Trans Date", "date"),
-    ("Tran Date", "date"),
-    ("Entry Date", "date"),
-    ("Book Date", "date"),
-    ("Effective Date", "date"),
-    ("Process Date", "date"),
-    ("Instrument Date", "date"),
-    ("Cheque Date", "date"),
-    ("Transaction Dt", "date"),
-    ("Txn Dt", "date"),
-    ("Val Date", "date"),
-    ("Value Dt", "date"),
-    ("Date of Transaction", "date"),
-    ("Transaction Date/Value Date", "date"),
+    "date": "date",
+    "txn date": "date",
+    "transaction date": "date",
+    "value date": "date",
+    "post date": "date",
+    "posting date": "date",
+    "trans date": "date",
+    "tran date": "date",
+    "entry date": "date",
+    "book date": "date",
+    "effective date": "date",
+    "process date": "date",
+    "instrument date": "date",
+    "cheque date": "date",
+    "transaction dt": "date",
+    "txn dt": "date",
+    "val date": "date",
+    "value dt": "date",
+    "date of transaction": "date",
 
     # ── DESCRIPTION ───────────────────────────────────────────────────────
-    ("Description", "description"),
-    ("Narration", "description"),
-    ("Remarks", "description"),
-    ("Particulars", "description"),
-    ("Transaction Remarks", "description"),
-    ("Details", "description"),
-    ("Transaction Details", "description"),
-    ("Transaction Narration", "description"),
-    ("Transaction Description", "description"),
-    ("Narrative", "description"),
-    ("Memo", "description"),
-    ("Transaction Particulars", "description"),
-    ("Cheque Details", "description"),
-    ("Transaction Info", "description"),
-    ("Payment Details", "description"),
-    ("Beneficiary Details", "description"),
-    ("Txn Remarks", "description"),
-    ("Txn Description", "description"),
-    ("Transaction", "description"),
-    ("Transactions", "description"),
+    "description": "description",
+    "narration": "description",
+    "remarks": "description",
+    "particulars": "description",
+    "transaction remarks": "description",
+    "details": "description",
+    "transaction details": "description",
+    "transaction narration": "description",
+    "transaction description": "description",
+    "narrative": "description",
+    "memo": "description",
+    "transaction particulars": "description",
+    "cheque details": "description",
+    "transaction info": "description",
+    "payment details": "description",
+    "beneficiary details": "description",
+    "txn remarks": "description",
+    "txn description": "description",
+    "transaction": "description",
+    "transactions": "description",
 
     # ── DEBIT ─────────────────────────────────────────────────────────────
-    ("Debit", "debit"),
-    ("Withdrawal", "debit"),
-    ("Dr", "debit"),
-    ("Withdrawals", "debit"),
-    ("Debit Amount", "debit"),
-    ("Withdrawal Amount", "debit"),
-    ("Dr Amount", "debit"),
-    ("Debit (INR)", "debit"),
-    ("Withdrawal (INR)", "debit"),
-    ("Debit(INR)", "debit"),
-    ("Withdrawal(INR)", "debit"),
-    ("Debit (Rs.)", "debit"),
-    ("Withdrawal (Rs.)", "debit"),
-    ("Money Out", "debit"),
-    ("Outflow", "debit"),
-    ("Paid Out", "debit"),
-    ("Debit Amt", "debit"),
-    ("WDL", "debit"),
-    ("Debit (₹)", "debit"),
-    ("₹ Debit", "debit"),
-    ("Rs. Debit", "debit"),
-    ("Debit Amount (INR)", "debit"),
-    ("Withdrawal Amount (INR)", "debit"),
-    ("Debit Amount (Rs)", "debit"),
-    ("Debit Amount(Rs.)", "debit"),
+    "debit": "debit",
+    "withdrawal": "debit",
+    "dr": "debit",
+    "withdrawals": "debit",
+    "debit amount": "debit",
+    "withdrawal amount": "debit",
+    "dr amount": "debit",
+    "debit inr": "debit",
+    "withdrawal inr": "debit",
+    "debit rs": "debit",
+    "withdrawal rs": "debit",
+    "money out": "debit",
+    "outflow": "debit",
+    "paid out": "debit",
+    "debit amt": "debit",
+    "wdl": "debit",
+    "debit amount inr": "debit",
+    "withdrawal amount inr": "debit",
+    "debit amount rs": "debit",
 
     # ── CREDIT ────────────────────────────────────────────────────────────
-    ("Credit", "credit"),
-    ("Deposit", "credit"),
-    ("Cr", "credit"),
-    ("Deposits", "credit"),
-    ("Credit Amount", "credit"),
-    ("Deposit Amount", "credit"),
-    ("Cr Amount", "credit"),
-    ("Credit (INR)", "credit"),
-    ("Deposit (INR)", "credit"),
-    ("Credit(INR)", "credit"),
-    ("Deposit(INR)", "credit"),
-    ("Credit (Rs.)", "credit"),
-    ("Deposit (Rs.)", "credit"),
-    ("Money In", "credit"),
-    ("Inflow", "credit"),
-    ("Paid In", "credit"),
-    ("Credit Amt", "credit"),
-    ("DEP", "credit"),
-    ("Credit (₹)", "credit"),
-    ("₹ Credit", "credit"),
-    ("Rs. Credit", "credit"),
-    ("Credit Amount (INR)", "credit"),
-    ("Deposit Amount (INR)", "credit"),
-    ("Credit Amount (Rs)", "credit"),
+    "credit": "credit",
+    "deposit": "credit",
+    "cr": "credit",
+    "deposits": "credit",
+    "credit amount": "credit",
+    "deposit amount": "credit",
+    "cr amount": "credit",
+    "credit inr": "credit",
+    "deposit inr": "credit",
+    "credit rs": "credit",
+    "deposit rs": "credit",
+    "money in": "credit",
+    "inflow": "credit",
+    "paid in": "credit",
+    "credit amt": "credit",
+    "dep": "credit",
+    "credit amount inr": "credit",
+    "deposit amount inr": "credit",
+    "credit amount rs": "credit",
 
     # ── BALANCE ───────────────────────────────────────────────────────────
-    ("Balance", "balance"),
-    ("Closing Balance", "balance"),
-    ("Running Balance", "balance"),
-    ("Available Balance", "balance"),
-    ("Bal", "balance"),
-    ("Closing Bal", "balance"),
-    ("Net Balance", "balance"),
-    ("Ledger Balance", "balance"),
-    ("Balance (INR)", "balance"),
-    ("Balance (Rs.)", "balance"),
-    ("Balance(INR)", "balance"),
-    ("Balance (₹)", "balance"),
-    ("₹ Balance", "balance"),
-    ("Rs. Balance", "balance"),
-    ("Balance( )", "balance"),
-    ("Balance()", "balance"),
-    ("Closing Balance (INR)", "balance"),
-    ("Running Bal", "balance"),
-    ("Book Balance", "balance"),
-    ("Ledger Bal", "balance"),
-    ("Available Bal", "balance"),
+    "balance": "balance",
+    "closing balance": "balance",
+    "running balance": "balance",
+    "available balance": "balance",
+    "bal": "balance",
+    "closing bal": "balance",
+    "net balance": "balance",
+    "ledger balance": "balance",
+    "balance inr": "balance",
+    "balance rs": "balance",
+    "closing balance inr": "balance",
+    "running bal": "balance",
+    "book balance": "balance",
+    "ledger bal": "balance",
+    "available bal": "balance",
 
     # ── AMOUNT (single combined column) ───────────────────────────────────
-    ("Amount", "amount"),
-    ("Amount( )", "amount"),
-    ("Amount()", "amount"),
-    ("Amount (INR)", "amount"),
-    ("Amount (Rs.)", "amount"),
-    ("Amount(INR)", "amount"),
-    ("Amount (₹)", "amount"),
-    ("₹ Amount", "amount"),
-    ("Rs. Amount", "amount"),
-    ("Transaction Amount", "amount"),
-    ("Txn Amount", "amount"),
-    ("Amount (Dr/Cr)", "amount"),
-    ("Dr/Cr Amount", "amount"),
-    ("Debit/Credit", "amount"),
-    ("Dr / Cr", "amount"),
-    ("Amount (Dr / Cr)", "amount"),
-    ("Net Amount", "amount"),
-    ("Amount (Debit/Credit)", "amount"),
+    "amount": "amount",
+    "amount inr": "amount",
+    "amount rs": "amount",
+    "transaction amount": "amount",
+    "txn amount": "amount",
+    "amount dr cr": "amount",
+    "dr cr amount": "amount",
+    "debit credit": "amount",
+    "dr cr": "amount",
+    "amount dr cr": "amount",
+    "net amount": "amount",
+    "amount debit credit": "amount",
 
     # ── REFERENCE ─────────────────────────────────────────────────────────
-    ("Cheque No", "reference"),
-    ("Cheque Number", "reference"),
-    ("Chq No", "reference"),
-    ("Chq/Ref", "reference"),
-    ("Ref No", "reference"),
-    ("Reference", "reference"),
-    ("Reference No", "reference"),
-    ("Transaction Id", "reference"),
-    ("Transaction ID", "reference"),
-    ("Txn Id", "reference"),
-    ("Txn ID", "reference"),
-    ("Transaction No", "reference"),
-    ("Instrument No", "reference"),
-    ("UTR No", "reference"),
-    ("UTR Number", "reference"),
-    ("Ref No/Cheque No", "reference"),
-    ("Cheque/Ref No", "reference"),
-    ("Trans Id", "reference"),
-    ("Trans ID", "reference"),
-    ("Ref Number", "reference"),
-    ("Instrument Number", "reference"),
-    ("Cheque No.", "reference"),
-    ("Ref No.", "reference"),
+    "cheque no": "reference",
+    "cheque number": "reference",
+    "chq no": "reference",
+    "chq ref": "reference",
+    "ref no": "reference",
+    "reference": "reference",
+    "reference no": "reference",
+    "transaction id": "reference",
+    "txn id": "reference",
+    "transaction no": "reference",
+    "instrument no": "reference",
+    "utr no": "reference",
+    "utr number": "reference",
+    "ref no cheque no": "reference",
+    "cheque ref no": "reference",
+    "trans id": "reference",
+    "ref number": "reference",
+    "instrument number": "reference",
 
     # ── IGNORE (serial numbers, page numbers, etc.) ───────────────────────
-    ("S No", "ignore"),
-    ("S.No", "ignore"),
-    ("Sr No", "ignore"),
-    ("Serial No", "ignore"),
-    ("Sl No", "ignore"),
-    ("No.", "ignore"),
-    ("#", "ignore"),
-    ("S/N", "ignore"),
-    ("Sr.", "ignore"),
-    ("Page", "ignore"),
-    ("Type", "ignore"),
-    ("Mode", "ignore"),
-    ("Channel", "ignore"),
-    ("Branch", "ignore"),
-    ("Branch Code", "ignore"),
-]
+    "s no": "ignore",
+    "sr no": "ignore",
+    "serial no": "ignore",
+    "sl no": "ignore",
+    "no": "ignore",
+    "s n": "ignore",
+    "sr": "ignore",
+    "page": "ignore",
+    "type": "ignore",
+    "mode": "ignore",
+    "channel": "ignore",
+    "branch": "ignore",
+    "branch code": "ignore",
+}
+
+
+def _normalize_header(text: str) -> str:
+    """Normalize a column header for lookup."""
+    if not text:
+        return ""
+    # Lowercase, strip
+    text = text.lower().strip()
+    # Remove currency symbols, parentheses, dots, special chars
+    text = re.sub(r'[₹$€().,;:\-/\\#*]+', ' ', text)
+    # Collapse whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 
 class ColumnClassifier:
     """
-    ML-based column header classifier.
+    Column header classifier using normalized lookup.
     Predicts the semantic role of a column from its header text.
-    Uses character n-gram TF-IDF + LinearSVC — same approach as spend classifier.
     """
 
-    def __init__(self, model_path: str = None):
-        self.model_path = Path(model_path) if model_path else MODEL_PATH
-        self.pipeline = None
-        self._load_or_train()
+    def __init__(self):
+        self._lookup = HEADER_ROLE_MAP
 
     def predict(self, header: str) -> str:
         """Predict the role of a column from its header text."""
         if not header or not header.strip():
             return "ignore"
-        processed = header.lower().strip()
-        return self.pipeline.predict([processed])[0]
+        normalized = _normalize_header(header)
+        if not normalized:
+            return "ignore"
+
+        # Exact match
+        if normalized in self._lookup:
+            return self._lookup[normalized]
+
+        # Substring match — check if any key is contained in the normalized header
+        # Sort by length descending so longer (more specific) matches win
+        for key in sorted(self._lookup.keys(), key=len, reverse=True):
+            if key in normalized:
+                return self._lookup[key]
+
+        return "ignore"
 
     def predict_batch(self, headers: List[str]) -> List[str]:
         """Predict roles for a list of column headers."""
-        processed = [h.lower().strip() if h else "" for h in headers]
-        return list(self.pipeline.predict(processed))
+        return [self.predict(h) for h in headers]
 
     def detect_column_map(self, header_row: List) -> Dict[str, int]:
         """
         Given a header row, return a dict mapping role → column index.
-        Uses ML prediction for each cell.
         """
         column_map = {}
         for idx, cell in enumerate(header_row):
@@ -277,48 +241,10 @@ class ColumnClassifier:
 
         return column_map
 
-    def _load_or_train(self):
-        """Load trained model or train a new one."""
-        if self.model_path.exists():
-            logger.info(f"Loading column classifier from {self.model_path}")
-            self.pipeline = joblib.load(self.model_path)
-        else:
-            logger.info("Training column classifier...")
-            self._train()
-
-    def _train(self):
-        """Train the column classifier on built-in training data."""
-        X = [text.lower().strip() for text, _ in COLUMN_TRAINING_DATA]
-        y = [label for _, label in COLUMN_TRAINING_DATA]
-
-        self.pipeline = Pipeline([
-            ("tfidf", TfidfVectorizer(
-                analyzer="char_wb",
-                ngram_range=(2, 4),
-                min_df=1,
-                sublinear_tf=True,
-            )),
-            ("clf", LinearSVC(
-                C=1.0,
-                dual="auto",
-                max_iter=2000,
-                class_weight="balanced",
-            )),
-        ])
-        self.pipeline.fit(X, y)
-
-        self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self.pipeline, self.model_path)
-        logger.info(f"Column classifier saved to {self.model_path}")
-
-        # Quick accuracy check
-        preds = self.pipeline.predict(X)
-        correct = sum(p == t for p, t in zip(preds, y))
-        logger.info(f"Column classifier training accuracy: {correct}/{len(y)} = {correct/len(y)*100:.1f}%")
-
 
 # Module-level singleton
 _classifier_instance = None
+
 
 def get_column_classifier() -> ColumnClassifier:
     global _classifier_instance

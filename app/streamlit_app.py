@@ -5,6 +5,7 @@ Upload bank statement PDFs, extract transactions and classify spend.
 
 import sys
 import os
+import json
 import logging
 import tempfile
 from pathlib import Path
@@ -95,8 +96,12 @@ with st.sidebar:
     if st.button("🔄 Retrain Model", use_container_width=True):
         with st.spinner("Training..."):
             try:
-                metrics = train_classifier()
-                st.success(f"Done! F1: {metrics['cv_f1_mean']:.3f}")
+                from classifier.feedback import retrain_with_feedback
+                metrics = retrain_with_feedback()
+                st.success(
+                    f"Done! F1: {metrics['cv_f1_mean']:.3f} "
+                    f"({metrics.get('user_corrections', 0)} corrections included)"
+                )
             except Exception as e:
                 st.error(f"Failed: {e}")
 
@@ -274,8 +279,8 @@ if meta:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📋 Transactions", "🥧 Category Breakdown", "📅 Monthly Trends", "🏪 Top Merchants", "💡 Insights"]
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["📋 Transactions", "🥧 Category Breakdown", "📅 Monthly Trends", "🏪 Top Merchants", "💡 Insights", "🎯 Feedback & Training"]
 )
 
 # ── Tab 1: Transactions Table ─────────────────────────────────────────────
@@ -309,6 +314,9 @@ with tab1:
 
     # Display
     display_df = filtered.copy()
+    # Drop internal columns not useful for display
+    if "raw_description" in display_df.columns:
+        display_df = display_df.drop(columns=["raw_description"])
     display_df["amount"] = display_df["amount"].apply(
         lambda x: f"₹{x:,.2f}" if x >= 0 else f"-₹{abs(x):,.2f}"
     )
@@ -332,7 +340,8 @@ with tab1:
     st.caption(f"Showing {len(filtered):,} of {len(df):,} transactions")
 
     # Download
-    csv = filtered.to_csv(index=False)
+    export_df = filtered.drop(columns=["raw_description"], errors="ignore")
+    csv = export_df.to_csv(index=False)
     st.download_button(
         "⬇️ Download as CSV",
         data=csv,
@@ -516,3 +525,239 @@ with tab5:
         )
         fig_heat.update_layout(height=350)
         st.plotly_chart(fig_heat, use_container_width=True)
+
+
+# ── Tab 6: Feedback & Training ────────────────────────────────────────────
+with tab6:
+    from classifier.feedback import (
+        load_corrections,
+        save_correction,
+        save_corrections_batch,
+        load_user_merchants,
+        save_merchant,
+        delete_merchant,
+        retrain_with_feedback,
+        get_feedback_stats,
+        clear_corrections,
+        clear_merchants,
+    )
+    from classifier.train import CATEGORIES
+
+    st.subheader("🎯 Improve the Model")
+    st.markdown(
+        "Correct misclassified transactions and add new merchants. "
+        "Your feedback is saved locally and used to retrain the model."
+    )
+
+    # ── Section 1: Fix Transaction Categories ─────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📝 Correct Transaction Categories")
+    st.caption(
+        "Select transactions that were misclassified and assign the correct category. "
+        "After making corrections, click 'Retrain Model' to update the classifier."
+    )
+
+    # Show editable transaction table
+    edit_df = df[["date", "description", "amount", "category"]].copy()
+    edit_df = edit_df.reset_index(drop=True)
+    edit_df["correct_category"] = edit_df["category"]
+
+    edited = st.data_editor(
+        edit_df,
+        column_config={
+            "date": st.column_config.TextColumn("Date", disabled=True),
+            "description": st.column_config.TextColumn("Description", disabled=True, width="large"),
+            "amount": st.column_config.NumberColumn("Amount", disabled=True, format="₹%.2f"),
+            "category": st.column_config.TextColumn("Current", disabled=True),
+            "correct_category": st.column_config.SelectboxColumn(
+                "Correct Category",
+                options=CATEGORIES,
+                required=True,
+            ),
+        },
+        use_container_width=True,
+        height=350,
+        hide_index=True,
+        key="category_editor",
+    )
+
+    # Find rows where user changed the category
+    if edited is not None:
+        changed_mask = edited["correct_category"] != edited["category"]
+        changed_rows = edited[changed_mask]
+
+        if not changed_rows.empty:
+            st.info(f"🔄 {len(changed_rows)} correction(s) pending")
+
+            if st.button("💾 Save Corrections", type="primary", use_container_width=True):
+                corrections_to_save = []
+                for _, row in changed_rows.iterrows():
+                    # Find raw_description from the original df
+                    raw = ""
+                    if "raw_description" in df.columns:
+                        match = df[df["description"] == row["description"]]
+                        if not match.empty:
+                            raw = match.iloc[0].get("raw_description", "")
+
+                    corrections_to_save.append({
+                        "description": row["description"],
+                        "raw_description": raw,
+                        "category": row["correct_category"],
+                        "original_category": row["category"],
+                    })
+
+                count = save_corrections_batch(corrections_to_save)
+                st.success(f"✅ Saved {count} correction(s)")
+
+    # ── Section 2: Add New Merchants ──────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🏪 Add New Merchant")
+    st.caption(
+        "Map a merchant name fragment to a category. "
+        "This works instantly (no retrain needed) — the lookup table is checked first."
+    )
+
+    col_m1, col_m2, col_m3 = st.columns([2, 2, 1])
+    with col_m1:
+        new_fragment = st.text_input(
+            "Merchant fragment (substring to match)",
+            placeholder="e.g. 'brindha' matches 'BRINDHAC'",
+            key="new_merchant_fragment",
+        )
+    with col_m2:
+        new_merchant_name = st.text_input(
+            "Clean display name",
+            placeholder="e.g. 'Brindha Cafe'",
+            key="new_merchant_name",
+        )
+    with col_m3:
+        new_merchant_cat = st.selectbox(
+            "Category",
+            options=CATEGORIES,
+            key="new_merchant_category",
+        )
+
+    if st.button("➕ Add Merchant", use_container_width=True):
+        if new_fragment and new_merchant_name:
+            save_merchant(new_fragment, new_merchant_name, new_merchant_cat)
+            st.success(f"✅ Added: '{new_fragment}' → {new_merchant_name} ({new_merchant_cat})")
+            st.caption("This mapping is active immediately. No retrain needed.")
+        else:
+            st.warning("Please fill in both fragment and display name.")
+
+    # Show existing user merchants
+    user_merchants = load_user_merchants()
+    if user_merchants:
+        st.markdown("**Your custom merchants:**")
+        merch_data = [
+            {"Fragment": k, "Name": v[0], "Category": v[1]}
+            for k, v in sorted(user_merchants.items())
+        ]
+        st.dataframe(
+            pd.DataFrame(merch_data),
+            use_container_width=True,
+            hide_index=True,
+            height=200,
+        )
+
+    # ── Section 3: Retrain ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🧠 Retrain Classifier")
+
+    stats = get_feedback_stats()
+    col_s1, col_s2 = st.columns(2)
+    col_s1.metric("Saved Corrections", stats["total_corrections"])
+    col_s2.metric("Custom Merchants", stats["total_merchants"])
+
+    if stats["corrections_by_category"]:
+        st.caption(f"Corrections by category: {stats['corrections_by_category']}")
+
+    st.markdown(
+        "Retraining merges your corrections with the base training data "
+        "and fits a new model. Custom merchants work instantly without retraining."
+    )
+
+    if st.button("🚀 Retrain with Feedback", type="primary", use_container_width=True):
+        with st.spinner("Training classifier with your corrections..."):
+            try:
+                metrics = retrain_with_feedback()
+                st.success(
+                    f"✅ Model retrained! "
+                    f"CV F1: {metrics['cv_f1_mean']:.3f} | "
+                    f"Samples: {metrics['n_samples']} "
+                    f"(+{metrics.get('user_corrections', 0)} from feedback)"
+                )
+                st.info("Re-upload your PDF or refresh to see updated classifications.")
+            except Exception as e:
+                st.error(f"❌ Training failed: {e}")
+
+    # ── Section 4: Export / Import Feedback ───────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📤 Export / Manage Feedback Data")
+
+    col_e1, col_e2 = st.columns(2)
+
+    with col_e1:
+        corrections = load_corrections()
+        if corrections:
+            corrections_json = json.dumps(corrections, indent=2)
+            st.download_button(
+                "⬇️ Export Corrections (JSON)",
+                data=corrections_json,
+                file_name="feedback_corrections.json",
+                mime="application/json",
+            )
+        else:
+            st.caption("No corrections saved yet.")
+
+    with col_e2:
+        if user_merchants:
+            merchants_json = json.dumps(
+                {k: list(v) for k, v in user_merchants.items()}, indent=2
+            )
+            st.download_button(
+                "⬇️ Export Merchants (JSON)",
+                data=merchants_json,
+                file_name="feedback_merchants.json",
+                mime="application/json",
+            )
+        else:
+            st.caption("No custom merchants saved yet.")
+
+    # Import feedback
+    st.markdown("**Import feedback from JSON:**")
+    uploaded_feedback = st.file_uploader(
+        "Upload corrections or merchants JSON",
+        type=["json"],
+        key="feedback_upload",
+    )
+    if uploaded_feedback is not None:
+        try:
+            import json as json_mod
+            data = json_mod.loads(uploaded_feedback.read())
+
+            if isinstance(data, list) and data and "description" in data[0]:
+                # It's corrections
+                count = save_corrections_batch(data)
+                st.success(f"✅ Imported {count} corrections")
+            elif isinstance(data, dict):
+                # It's merchants
+                for frag, (name, cat) in data.items():
+                    save_merchant(frag, name, cat)
+                st.success(f"✅ Imported {len(data)} merchants")
+            else:
+                st.warning("Unrecognized JSON format.")
+        except Exception as e:
+            st.error(f"Failed to import: {e}")
+
+    # Clear buttons
+    with st.expander("⚠️ Danger Zone"):
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            if st.button("🗑️ Clear All Corrections"):
+                clear_corrections()
+                st.success("Corrections cleared.")
+        with col_d2:
+            if st.button("🗑️ Clear All Custom Merchants"):
+                clear_merchants()
+                st.success("Custom merchants cleared.")

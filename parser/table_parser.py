@@ -253,6 +253,7 @@ class TableParser:
         return {
             "date": date_str.strip(),
             "description": description,
+            "raw_description": description_raw,
             "amount": amount,
             "balance": balance,
         }

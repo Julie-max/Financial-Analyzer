@@ -32,13 +32,6 @@ MERCHANT_DB = {
     "pvr":          ("PVR Cinemas", "Entertainment"),
     "inox":         ("INOX Movies", "Entertainment"),
     "cinepolis":    ("Cinepolis", "Entertainment"),
-    "netflix":      ("Netflix", "Entertainment"),
-    "hotstar":      ("Hotstar", "Entertainment"),
-    "disneyplus":   ("Disney+Hotstar", "Entertainment"),
-    "spotify":      ("Spotify", "Entertainment"),
-    "spotifyindi":  ("Spotify", "Entertainment"),
-    "spotifyindia": ("Spotify", "Entertainment"),
-    "apple music":  ("Apple Music", "Entertainment"),
     "steam":        ("Steam", "Entertainment"),
     "playstation":  ("PlayStation", "Entertainment"),
     "xbox":         ("Xbox", "Entertainment"),
@@ -46,26 +39,37 @@ MERCHANT_DB = {
     "iccl zerod":   ("Zerodha", "Entertainment"),
     "zerodhamf":    ("Zerodha", "Entertainment"),
     "zerodhafund":  ("Zerodha", "Entertainment"),
+    "zerodha brok": ("Zerodha", "Entertainment"),
     "dream11":      ("Dream11", "Entertainment"),
-    "mpl":          ("MPL", "Entertainment"),
     "wynk":         ("Wynk Music", "Entertainment"),
     "gaana":        ("Gaana", "Entertainment"),
     "jiosaavn":     ("JioSaavn", "Entertainment"),
-    "youtube":      ("YouTube", "Entertainment"),
-    "amazon prime": ("Amazon Prime", "Entertainment"),
-    "prime video":  ("Prime Video", "Entertainment"),
     "bigtreeent":   ("BookMyShow", "Entertainment"),
     "bigtree":      ("BookMyShow", "Entertainment"),
     "big tree":     ("BookMyShow", "Entertainment"),
-    "autope p":     ("IRCTC AutoPay", "Travel"),  # IRCTC auto-pay refund
+    "autope p":     ("IRCTC AutoPay", "Travel"),
     "irctcautop":   ("IRCTC AutoPay", "Travel"),
+
+    # ── Bills (subscriptions that are recurring) ──────────────────────────
+    "netflix":      ("Netflix", "Bills"),
+    "hotstar":      ("Hotstar", "Bills"),
+    "disneyplus":   ("Disney+Hotstar", "Bills"),
+    "spotify":      ("Spotify", "Bills"),
+    "spotifyindi":  ("Spotify", "Bills"),
+    "spotifyindia": ("Spotify", "Bills"),
+    "apple music":  ("Apple Music", "Bills"),
+    "youtube":      ("YouTube Premium", "Bills"),
+    "amazon prime": ("Amazon Prime", "Bills"),
+    "prime video":  ("Prime Video", "Bills"),
 
     # ── Travel ─────────────────────────────────────────────────────────────
     "makemytr":     ("MakeMyTrip", "Travel"),
     "makemytrip":   ("MakeMyTrip", "Travel"),
+    "make my tr":   ("MakeMyTrip", "Travel"),
     "irctc":        ("IRCTC", "Travel"),
     "indianrail":   ("Indian Railways", "Travel"),
     "indian r":     ("Indian Railways", "Travel"),
+    "indian rai":   ("Indian Railways", "Travel"),
     "redbus":       ("RedBus", "Travel"),
     "redbus1":      ("RedBus", "Travel"),
     "redbus i":     ("RedBus", "Travel"),
@@ -85,13 +89,18 @@ MERCHANT_DB = {
     "iocl":         ("IOCL Fuel", "Travel"),
     "petrol":       ("Petrol", "Travel"),
     "fastag":       ("FASTag", "Travel"),
-    "atm withdrawal": ("ATM Withdrawal", "Others"),
-    "atm wdl":      ("ATM Withdrawal", "Others"),
     "cmrl":         ("Chennai Metro", "Travel"),
+    "chennai me":   ("Chennai Metro", "Travel"),
     "metro":        ("Metro Rail", "Travel"),
     "expedia":      ("Expedia", "Travel"),
     "agoda":        ("Agoda", "Travel"),
     "abhibus":      ("AbhiBus", "Travel"),
+    "town house":   ("Town House Hotel", "Travel"),
+    "bhimanna h cab": ("Bhimanna Cab", "Travel"),
+    "cab ride":     ("Cab Ride", "Travel"),
+    "auto ride":    ("Auto Ride", "Travel"),
+    "shanmugana auto": ("Auto Ride", "Travel"),
+    "kamaraj aka":  ("Kamaraj Transport", "Travel"),
 
     # ── Food ───────────────────────────────────────────────────────────────
     "swiggy":       ("Swiggy", "Food"),
@@ -125,19 +134,34 @@ MERCHANT_DB = {
     "wine hil":     ("Wine Hills", "Food"),
     "wine hill":    ("Wine Hills", "Food"),
     "gopuram":      ("Gopuram", "Food"),
+    "hotel go":     ("Hotel Gopuram", "Food"),
     "eachanari":    ("Eachanari", "Food"),
     "amman co":     ("Amman Co", "Food"),
     "namma am":     ("Namma Amman", "Food"),
     "zamco fo":     ("Zamco Food", "Food"),
     "thats y fo":   ("That's Y Food", "Food"),
     "layalee":      ("Layalee", "Food"),
+    "brindhac":     ("Brindha Cafe", "Food"),
+    "mk foods":     ("MK Foods", "Food"),
+    "annapooran":   ("Annapoorna", "Food"),
+    "iniyaas re":   ("Iniyaas Restaurant", "Food"),
+    "third wave":   ("Third Wave Coffee", "Food"),
+    "thirdwavecoffe": ("Third Wave Coffee", "Food"),
+    "prs brol":     ("PRS Broilers", "Food"),
+    "sri sara":     ("Sri Saravana", "Food"),
+    "be kind":      ("Be Kind Cafe", "Food"),
+    "kay ess":      ("Kay Ess", "Food"),
+    "laxmi hote":   ("Laxmi Hotel", "Food"),
+    "le grace":     ("Le Grace Restaurant", "Food"),
+    "mr vegetab":   ("Vegetables", "Food"),
+    "basil fnb":    ("Basil FnB", "Food"),
     "gopuram":      ("Gopuram", "Food"),
 
     # ── Bills ──────────────────────────────────────────────────────────────
     "jiofiber":     ("JioFiber", "Bills"),
     "jiofiberpre":  ("JioFiber", "Bills"),
     "jio postpa":   ("Jio Postpaid", "Bills"),
-    "jio":          ("Jio", "Bills"),
+    "jio mobile":   ("Jio", "Bills"),
     "airtel":       ("Airtel", "Bills"),
     "vodafone":     ("Vodafone", "Bills"),
     "bsnl":         ("BSNL", "Bills"),
@@ -190,14 +214,27 @@ MERCHANT_DB = {
     "hevo technolo": ("Hevo Technologies", "Others"),
     "pentafox":     ("Pentafox Technologies", "Others"),
     "saafe techno": ("SAAFE Technologies", "Others"),
+    "sagility":     ("Sagility Limited", "Others"),
     "groww":        ("Groww", "Others"),
-    "zerodha brok": ("Zerodha", "Others"),
+    "groww inve":   ("Groww", "Others"),
     "neft":         ("NEFT Transfer", "Others"),
     "imps":         ("IMPS Transfer", "Others"),
     "interest credit": ("Interest Credit", "Others"),
     "upi reversal": ("UPI Reversal", "Others"),
     "bhimcashback": ("BHIM Cashback", "Others"),
     "npci bhim":    ("BHIM Cashback", "Others"),
+    "fund transfer": ("Fund Transfer", "Others"),
+    "house expense": ("House Expense", "Others"),
+    "family":       ("Family Transfer", "Others"),
+    "debt repay":   ("Debt Repayment", "Others"),
+    "cash wdl":     ("Cash Withdrawal", "Others"),
+    "atm withdrawal": ("ATM Withdrawal", "Others"),
+    "atm wdl":      ("ATM Withdrawal", "Others"),
+    "to wife":      ("Family Transfer", "Others"),
+    "to amma":      ("Family Transfer", "Others"),
+    "to ramya":     ("Family Transfer", "Others"),
+    "emergency":    ("Emergency Transfer", "Others"),
+    "vignesh sa":   ("Self Transfer", "Others"),
 }
 
 
@@ -205,11 +242,22 @@ class MerchantLookup:
     """
     Stage 1 classifier: looks up known merchants by substring matching.
     Returns (clean_name, category) or None if not found.
+    
+    Checks both the built-in MERCHANT_DB and user-added merchants from feedback.
     """
 
     def __init__(self):
         # Pre-process keys to lowercase for fast lookup
         self._db = {k.lower(): v for k, v in MERCHANT_DB.items()}
+        
+        # Load user-added merchants and merge (user overrides built-in)
+        try:
+            from classifier.feedback import load_user_merchants
+            user_merchants = load_user_merchants()
+            self._db.update(user_merchants)
+        except Exception:
+            pass
+        
         # Sort by length descending so longer (more specific) matches win
         self._keys = sorted(self._db.keys(), key=len, reverse=True)
 
@@ -232,3 +280,7 @@ class MerchantLookup:
                 return self._db[key]
 
         return None
+    
+    def reload(self):
+        """Reload the merchant database (call after adding new merchants)."""
+        self.__init__()

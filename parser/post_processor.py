@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 # Fields required in every transaction
 REQUIRED_FIELDS = {"date", "description", "amount", "balance"}
+# Optional fields that get passed through
+OPTIONAL_FIELDS = {"raw_description"}
 
 # Accepted date input formats (tried in order before falling back to dateutil)
 DATE_FORMATS = [
@@ -130,6 +132,7 @@ class PostProcessor:
         return {
             "date": parsed_date,
             "description": description,
+            "raw_description": txn.get("raw_description", ""),
             "amount": amount,
             "balance": balance,
         }
@@ -206,7 +209,7 @@ class PostProcessor:
         )
 
     def _empty_df(self) -> pd.DataFrame:
-        return pd.DataFrame(columns=["date", "description", "amount", "balance"])
+        return pd.DataFrame(columns=["date", "description", "raw_description", "amount", "balance"])
 
 
 def post_process(

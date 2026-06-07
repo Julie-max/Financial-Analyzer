@@ -20,6 +20,9 @@ data/*.pdf
 # Streamlit cache
 .streamlit/
 
+# User feedback data (regenerated from user interaction)
+data/feedback/
+
 # IDE
 .vscode/
 .idea/

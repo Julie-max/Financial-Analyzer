@@ -167,6 +167,7 @@ class FinancialPipeline:
                     transactions.append({
                         "date": date_match.group(1),
                         "description": line,
+                        "raw_description": line,
                         "amount": None,
                         "balance": None,
                     })
@@ -175,7 +176,7 @@ class FinancialPipeline:
     def _error_result(self, message: str) -> Dict[str, Any]:
         return {
             "transactions": pd.DataFrame(
-                columns=["date", "description", "amount", "balance", "category"]
+                columns=["date", "description", "raw_description", "amount", "balance", "category"]
             ),
             "raw_count": 0,
             "final_count": 0,

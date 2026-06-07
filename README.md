@@ -11,35 +11,60 @@ Bank Statement PDF
         │
         ▼
 pdfplumber — spatial table extraction
-        │  raw table rows
+        │  raw table rows (with full description preserved)
+        ▼
+Column Classifier (lookup table) — maps headers to roles
+        │
         ▼
 CRF Parser — sequence labeling (token → PAYEE / REF_NUM / BANK / VPA / ...)
-        │  clean merchant names
+        │  clean merchant names + raw description preserved
         ▼
 Post-Processor — date normalization, deduplication, validation
-        │  clean DataFrame
+        │  clean DataFrame with raw_description column
+        ▼
+VPA Pattern Classifier — extracts VPA from raw, classifies as personal/merchant/qr
+        │  appends VPA_PERSONAL / VPA_MERCHANT / VPA_QR signal
         ▼
 Two-Stage Classifier:
-  Stage 1: Merchant lookup (known merchants → instant category)
-  Stage 2: Char n-gram TF-IDF + LinearSVC (everything else)
+  Stage 1: Merchant lookup (~150 known merchants → instant category)
+  Stage 2: Char n-gram TF-IDF + LinearSVC (everything else, with VPA signal)
         │  categorized DataFrame
         ▼
 Streamlit UI — charts, insights, CSV export
 ```
 
-## ML Algorithms Used
+## ML Components (3 layers, down from 5)
 
-### Parsing: CRF (Conditional Random Fields)
-The classic pre-deep-learning NLP algorithm for sequence labeling. Given a tokenized transaction description, the CRF labels each token as `PAYEE`, `REF_NUM`, `BANK`, `VPA`, `PREFIX`, `SUFFIX`, etc. — then extracts the `PAYEE` tokens as the merchant name.
+| Layer | Algorithm | Purpose |
+|-------|-----------|---------|
+| CRF Parser | Conditional Random Fields (sklearn-crfsuite) | Extract merchant name from structured bank descriptions |
+| VPA Pattern Detection | Deterministic regex rules | Classify VPA as personal/merchant/QR — strongest P2P signal |
+| Spend Classifier | Char n-gram TF-IDF + LinearSVC | Classify into 6 spending categories |
 
-This generalizes across all bank formats (UPI, NEFT, IMPS, BIL, ATM, POS) because it learns structural patterns from labeled examples, not bank-specific rules.
+### Why these choices
 
-### Classification: Character n-gram TF-IDF + LinearSVC
-Uses character-level n-grams (2–5 chars) instead of word n-grams. This handles truncated UPI merchant names like `BOOKMYSH` (BookMyShow), `MAKEMYTR` (MakeMyTrip), `SWIGGYSTOR` (Swiggy) — because character sequences overlap with the full names in training data.
+**CRF for parsing:** Bank descriptions are structured sequences (`UPI/DR/REF/PAYEE/BANK/VPA`). CRF labels tokens in context — generalizes across bank formats without bank-specific rules.
 
-A two-stage approach:
-1. **Merchant lookup** — instant category for ~120 known merchants
-2. **LinearSVC** — handles everything else using character similarity
+**Deterministic VPA classification:** UPI VPAs have distinct patterns:
+- Phone numbers (10 digits) → personal (P2P transfer)
+- `q` + digits → personal (PhonePe/GPay P2P)
+- `paytmqr*`, `vyapar.*` → QR/merchant (small vendor)
+- Brand names (`swiggystores`, `indianrail`) → known merchant
+
+This is better as rules than ML because the patterns are structural, not semantic.
+
+**Character n-gram TF-IDF + LinearSVC for classification:** UPI truncates merchant names to 8 chars (`BOOKMYSH` = BookMyShow). Character n-grams (2-5 chars) capture partial overlaps. The `VPA_PERSONAL` signal strongly pushes truncated personal names toward "Others".
+
+### What was removed (previously 5 layers → now 3)
+
+1. **Column Header ML Classifier** → replaced with a simple normalized lookup table. ~100 known column headers across Indian banks don't need ML.
+2. **VPA ML Classifier** → replaced with deterministic pattern matching. VPA formats are structural patterns (phone numbers, QR codes), not semantic — rules are more reliable than a small ML model.
+
+## Key Design Decision: Preserving Raw Description
+
+The raw bank description (e.g., `UPI/DR/REF/PAYEE/BANK/VPA/...`) contains VPA info that strongly signals personal vs merchant. The pipeline preserves this through all stages so the classifier can extract VPA signals at classification time.
+
+This solves the #1 problem: **individual names (P2P payments) now correctly classify as "Others"** because the VPA pattern (phone number, q-prefix) identifies them as personal transfers.
 
 ## Project Structure
 
@@ -48,22 +73,24 @@ financial-analyzer/
 ├── app/
 │   └── streamlit_app.py          # Streamlit UI
 ├── classifier/
-│   ├── merchant_lookup.py        # Stage 1: known merchant database
-│   ├── predict.py                # Two-stage classifier
-│   └── train.py                  # Char TF-IDF + LinearSVC training
+│   ├── merchant_lookup.py        # Stage 1: ~150 known merchants (substring match)
+│   ├── predict.py                # Two-stage classifier + VPA extraction
+│   └── train.py                  # Char TF-IDF + LinearSVC training (~250 examples)
 ├── data/
 │   ├── generate_sample_pdf.py    # Generate test PDFs (HDFC + SBI)
-│   ├── hdfc_sample_statement.pdf
-│   └── sbi_sample_statement.pdf
+│   └── *.pdf                     # Bank statement PDFs
 ├── models/
 │   ├── classifier_pipeline.joblib  # Trained TF-IDF + LinearSVC
 │   ├── crf_parser.joblib           # Trained CRF model
 │   └── categories.json
 ├── parser/
+│   ├── column_classifier.py      # Normalized lookup for column headers
 │   ├── crf_parser.py             # CRF sequence labeler for descriptions
 │   ├── pdf_extractor.py          # pdfplumber + PyMuPDF fallback
 │   ├── post_processor.py         # Date normalization, dedup, validation
 │   └── table_parser.py           # Column detection, row parsing, schema detection
+├── scripts/
+│   └── evaluate.py               # Evaluation script for any PDF
 ├── utils/
 │   ├── insights.py               # Analytics and natural language insights
 │   └── pipeline.py               # End-to-end orchestration
@@ -74,92 +101,58 @@ financial-analyzer/
 
 ## Setup
 
-### 1. Python 3.10+
-
 ```bash
-python --version
-```
-
-### 2. Create and activate a virtual environment
-
-```bash
-cd financial-analyzer
+# Python 3.10+
 python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# macOS / Linux
 source venv/bin/activate
-```
+pip install -r requirements.txt
 
-### 3. Run setup (installs dependencies + trains models)
+# Train models (auto-trains on first run, or manually)
+python -c "from classifier.train import train; train()"
 
-```bash
-python setup.py
-```
-
-This installs all dependencies, trains the spend classifier, and trains the CRF parser.
-
-### 4. Start the app
-
-```bash
+# Run the app
 streamlit run app/streamlit_app.py
-```
 
-Open http://localhost:8501
+# Evaluate on a specific PDF
+python scripts/evaluate.py data/your_statement.pdf
+```
 
 ## Supported Bank Formats
 
-The system handles any digital (non-scanned) bank statement PDF. Tested on:
-
-| Bank | Format | Notes |
-|------|--------|-------|
-| ICICI | UPI/DR/REF/PAYEE/BANK/VPA | Standard ICICI detailed statement |
-| SBI | WDL TFR UPI/DR/... AT BRANCH | SBI passbook format |
-| City Union Bank | TO ONL UPI/DR/... U::00116 | CUB mPassbook format |
-| HDFC | Debit/Credit columns | Standard HDFC statement |
-| Any other | CRF generalizes | No bank-specific code needed |
+| Bank | Format | Status |
+|------|--------|--------|
+| ICICI | UPI/PAYEE/VPA/REMARK/BANK/REF | ✅ Tested |
+| SBI | WDL TFR UPI/DR/REF/PAYEE/BANK/VPA AT BRANCH | ✅ Tested |
+| City Union Bank | UPI/DR/REF/PAYEE/BANK/VPA/U::00116 | ✅ Tested |
+| HDFC | Debit/Credit separate columns | ✅ Tested |
+| Axis | UPIAB/REF/CR/PAYEE/BANK | ✅ Trained |
+| Any digital PDF | CRF + column detection generalizes | Should work |
 
 ## Spending Categories
 
 | Category | Examples |
 |----------|---------|
-| Food | Swiggy, Zomato, restaurants, groceries, cafes |
-| Travel | Uber, IRCTC, flights, fuel, hotels, cabs |
+| Food | Swiggy, Zomato, restaurants, groceries, cafes, small food vendors (QR) |
+| Travel | Uber, IRCTC, flights, fuel, hotels, cabs, metro, auto rides |
 | Shopping | Amazon, Flipkart, clothing, electronics |
-| Bills | Electricity, mobile, subscriptions, EMIs, insurance |
-| Entertainment | Movies, gaming, concerts, streaming |
-| Others | Salary, transfers, investments, ATM |
+| Bills | Electricity, mobile, subscriptions (Netflix, Spotify, LinkedIn), EMIs, insurance |
+| Entertainment | Movies, gaming, concerts, Zerodha (investments) |
+| Others | Salary, P2P transfers, fund transfers, ATM, investments, unknown |
 
-## Why These Algorithms
+## Known Limitations & Gaps
 
-### Why CRF for parsing?
-Bank transaction descriptions are structured sequences — `UPI/DR/REFNO/PAYEE/BANK/VPA`. CRF is the right tool for sequence labeling: it considers the context of neighboring tokens, not just individual tokens in isolation. A new bank format with the same structural logic is handled correctly without any code changes.
+| Limitation | Impact | Path to Fix |
+|-----------|--------|-------------|
+| Training data is embedded (~250 examples) | May misclassify unseen merchant patterns | Add feedback loop, retrain on corrections |
+| QR payments to individuals are ambiguous | "MOHANRAJ" via paytmqr could be food vendor or person | Need amount-based heuristics or user correction |
+| CRF trained on ~30 labeled sequences | May fail on completely new bank formats | Add more labeled examples from new banks |
+| Scanned/image PDFs not supported | No OCR layer | Add Tesseract/EasyOCR if needed |
+| No configurable categories | Fixed at 6 | Add user-defined category mapping |
+| Merchant lookup is a curated dictionary | New merchants need manual addition | Could be replaced with fuzzy matching + confidence |
 
-### Why character n-gram TF-IDF + LinearSVC for classification?
-UPI truncates merchant names to 8 characters: `BOOKMYSH`, `MAKEMYTR`, `SWIGGYSTOR`. Word-level TF-IDF fails on these because there's zero word overlap with the training data. Character n-grams (2–5 chars) capture partial matches: `BOOKMYSH` shares `BOOK`, `OOKM`, `OKMY`, `KMYS`, `MYSH` with `BOOKMYSHOW`. LinearSVC is fast, lightweight, and works well with high-dimensional sparse character features.
+## How to Improve
 
-### Why not LLM?
-- Financial data must stay on-device — no API calls
-- LLMs are slow (20–60s per PDF) and non-deterministic
-- The parsing problem is structured, not semantic — CRF is the right tool
-- The classification problem is keyword-driven — character TF-IDF is sufficient
-
-## Known Limitations
-
-| Limitation | Workaround |
-|-----------|------------|
-| Scanned/image PDFs | Convert with OCR (Tesseract) first |
-| Password-protected PDFs | Unlock PDF before uploading |
-| Multi-currency statements | Amounts treated as single currency |
-
-## Troubleshooting
-
-**No transactions extracted:**
-- Ensure the PDF is a digital (text-based) bank statement, not a scan
-- Try a different PDF viewer to confirm text is selectable
-
-**Wrong categories:**
-- Click "Retrain Model" in the sidebar after adding training examples to `classifier/train.py`
-- Add the merchant to `classifier/merchant_lookup.py` for instant lookup
+1. **Add more training data**: Edit `classifier/train.py` TRAINING_DATA with new labeled examples
+2. **Add merchants**: Edit `classifier/merchant_lookup.py` MERCHANT_DB
+3. **Retrain**: Click "Retrain Model" in the app sidebar, or delete models/*.joblib and restart
+4. **Test on new bank**: Run `python scripts/evaluate.py your_new_statement.pdf` and review output
