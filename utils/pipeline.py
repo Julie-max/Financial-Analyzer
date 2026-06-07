@@ -2,7 +2,7 @@
 End-to-End Integration Pipeline
 PDF → Table Extraction → CRF Description Parsing → Post-Processing → Classification
 
-No LLM. No neural network.
+Fully offline. No LLM. No GPU required.
 - pdfplumber extracts the transaction table spatially
 - CRF (Conditional Random Fields) labels tokens to extract merchant names
 - Character n-gram TF-IDF + LinearSVC classifies spend categories

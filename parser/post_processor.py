@@ -1,5 +1,5 @@
 """
-Post-Processor for LLM-extracted transactions.
+Post-Processor for parsed transactions.
 Validates, normalizes, deduplicates, and standardizes transaction data.
 """
 
@@ -40,7 +40,7 @@ DATE_FORMATS = [
 
 class PostProcessor:
     """
-    Cleans and normalises raw transaction dicts produced by the LLM parser.
+    Cleans and normalises raw transaction dicts produced by the table parser.
     """
 
     def __init__(self, deduplicate: bool = True):

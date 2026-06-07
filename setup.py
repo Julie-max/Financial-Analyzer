@@ -19,55 +19,44 @@ def run(cmd: list, check: bool = True):
 
 def main():
     print("=" * 60)
-    print("  Financial Analyzer — Setup")
+    print("  Financial Analyzer - Setup")
     print("=" * 60)
 
     # 1. Install requirements
-    print("\n[1/4] Installing Python dependencies...")
+    print("\n[1/3] Installing Python dependencies...")
     run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
 
     # 2. Train spend classifier
-    print("\n[2/4] Training spend classifier (char TF-IDF + LinearSVC)...")
+    print("\n[2/3] Training spend classifier (char TF-IDF + LinearSVC)...")
     try:
         sys.path.insert(0, str(Path(__file__).parent))
         from classifier.train import train
         metrics = train()
-        print(f"  ✓ Classifier trained. CV F1: {metrics['cv_f1_mean']:.3f}")
+        print(f"  Done. CV F1: {metrics['cv_f1_mean']:.3f}")
     except Exception as e:
-        print(f"  ✗ Classifier training failed: {e}")
+        print(f"  Classifier training failed: {e}")
 
     # 3. Train CRF description parser
-    print("\n[3/5] Training CRF description parser...")
+    print("\n[3/3] Training CRF description parser...")
     try:
         from parser.crf_parser import CRFDescriptionParser
         CRFDescriptionParser()
-        print("  ✓ CRF parser trained and ready.")
+        print("  Done. CRF parser trained and ready.")
     except Exception as e:
-        print(f"  ✗ CRF parser training failed: {e}")
+        print(f"  CRF parser training failed: {e}")
 
-    # 4. Train ML column header classifier
-    print("\n[4/5] Training ML column header classifier (char TF-IDF + LinearSVC)...")
-    try:
-        from parser.column_classifier import ColumnClassifier
-        ColumnClassifier()
-        print("  ✓ Column classifier trained and ready.")
-    except Exception as e:
-        print(f"  ✗ Column classifier training failed: {e}")
-
-    # 5. Generate sample PDFs for testing
-    print("\n[5/5] Generating sample bank statement PDFs...")
+    # Generate sample PDFs for testing (optional)
+    print("\nGenerating sample bank statement PDFs...")
     try:
         from data.generate_sample_pdf import generate_hdfc_statement, generate_sbi_statement
         data_dir = Path(__file__).parent / "data"
         generate_hdfc_statement(str(data_dir / "hdfc_sample_statement.pdf"), months=2)
         generate_sbi_statement(str(data_dir / "sbi_sample_statement.pdf"), months=2)
-        print("  ✓ Sample PDFs generated in data/")
+        print("  Sample PDFs generated in data/")
     except ImportError:
-        print("  ⚠ reportlab not installed — skipping sample PDF generation.")
-        print("    Install with: pip install reportlab")
-        print("    Then run: python data/generate_sample_pdf.py")
+        print("  reportlab not installed - skipping sample PDF generation.")
     except Exception as e:
-        print(f"  ✗ Sample PDF generation failed: {e}")
+        print(f"  Sample PDF generation failed: {e}")
 
     print("\n" + "=" * 60)
     print("  Setup complete!")

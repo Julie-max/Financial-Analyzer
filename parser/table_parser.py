@@ -1,10 +1,9 @@
 ﻿"""
-ML-Based Table Parser
+Table Parser
 Converts raw pdfplumber table rows into structured transaction dicts.
 
-No LLM. No neural network. No hardcoded keyword lists.
 Uses:
-  - ML Column Classifier (char TF-IDF + LinearSVC) for column header detection
+  - Column header lookup for role detection (date, description, debit, credit, balance)
   - CRF Parser for merchant name extraction from descriptions
   - Data-driven schema detection for amount format (debit/credit/single column)
   - Date pattern validation for transaction row filtering
@@ -91,7 +90,7 @@ class TableParser:
     # ------------------------------------------------------------------
 
     def _find_header_row(self, table: List[List]) -> Optional[List]:
-        """Find the header row using the ML column classifier."""
+        """Find the header row using the column classifier."""
         for row in table[:5]:
             if row and self._is_header_row(row):
                 return row
@@ -99,7 +98,7 @@ class TableParser:
 
     def _is_header_row(self, row: List) -> bool:
         """
-        Check if a row is a column header using the ML column classifier.
+        Check if a row is a column header using the column classifier.
         A row is a header if the classifier assigns meaningful roles to 2+ cells
         and at least one is a date or amount role.
         """
@@ -115,8 +114,8 @@ class TableParser:
 
     def _detect_columns(self, header_row: List) -> Dict[str, int]:
         """
-        Map column roles to their index positions using the ML column classifier.
-        No hardcoded keyword lists â€” generalizes to unseen column headers.
+        Map column roles to their index positions using the column classifier.
+        Handles diverse bank header formats â€” generalizes to unseen column headers.
         """
         from parser.column_classifier import get_column_classifier
         clf = get_column_classifier()
@@ -364,7 +363,7 @@ class TableParser:
         # Collapse newlines and extra whitespace
         value = " ".join(value.split())
 
-        # Use CRF parser â€” the ML-based sequence labeler
+        # Use CRF parser â€” the sequence labeler for merchant extraction
         try:
             from parser.crf_parser import extract_payee
             result = extract_payee(value)
